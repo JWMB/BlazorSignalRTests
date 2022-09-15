@@ -39,19 +39,20 @@ namespace Organization.Tests
             store.GetValues().Count().ShouldBe(2);
 
             // Verify deserialization:
-            rs = new RepositoryService(store);
-            rs.Schools.Query().Count().ShouldBe(0);
-            rs.Init();
-            rs.Schools.Query().Count().ShouldBe(1);
-            rs.Classes.Query().Count().ShouldBe(1);
+            var rs2 = new RepositoryService(store);
+            rs2.Schools.Query().Count().ShouldBe(0);
+            rs2.Init();
+            rs2.Schools.Query().Count().ShouldBe(rs.Schools.Query().Count());
+            rs2.Classes.Query().Count().ShouldBe(rs.Classes.Query().Count());
 
-            rs.Schools.Query().First().Classes.Count.ShouldBe(1);
+            rs2.Schools.Query().First().Classes.Count.ShouldBe(1);
 
-            var toDelete = rs.Classes.Query().First();
+            // Removal again:
+            var toDelete = rs2.Classes.Query().First();
             store.Delete(toDelete.Id.ToString());
-            rs.Refresh(new[] { toDelete.Id });
+            rs2.Refresh(new[] { toDelete.Id });
 
-            rs.Classes.Query().Count().ShouldBe(0);
+            rs2.Classes.Query().Count().ShouldBe(0);
             //rs.Schools.Query().First().Classes.Count.ShouldBe(0);
         }
 

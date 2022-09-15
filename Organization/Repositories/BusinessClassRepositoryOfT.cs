@@ -1,11 +1,13 @@
-﻿namespace Organization.Repositories
+﻿using System.Collections.Concurrent;
+
+namespace Organization.Repositories
 {
     public class BusinessClassRepositoryOfT<TBusinessClass, TSerializable> : IRepository<TBusinessClass>
         where TBusinessClass : IDocumentId, IWithSerializable<TSerializable>
         where TSerializable : IDocumentId, IToBusinessObject<TBusinessClass>
     {
         protected readonly RepositoryOfT<TSerializable> serializedRepository;
-        protected readonly Dictionary<Guid, TBusinessClass> values = new();
+        protected readonly ConcurrentDictionary<Guid, TBusinessClass> cache = new();
 
         public BusinessClassRepositoryOfT(RepositoryOfT<TSerializable> serializedRepository)
         {
@@ -16,35 +18,32 @@
 
         public void Add(TBusinessClass item)
         {
-            values.Add(item.Id, item);
+            cache.AddOrUpdate(item.Id, item, (k, old) => item);
             serializedRepository.Add(ToSerializable(item));
         }
         public void Update(TBusinessClass item)
         {
-            values[item.Id] = item;
+            //TODO: cache.TryUpdate(item.Id, item)
+            cache.AddOrUpdate(item.Id, item, (k, old) => item);
             serializedRepository.Update(ToSerializable(item));
         }
 
-        public TBusinessClass Get(Guid id) => values[id];
+        public TBusinessClass Get(Guid id) => cache[id];
 
         public IEnumerable<TSerializable> StoreRefresh(IEnumerable<Guid> ids, IRepositoryService repos)
         {
-            // TODO: we must check deleted ids - e.g. if a Class was removed, we must remove ClassTeacher, reference in School, Students etc...
-            // 
-            //var deletedXXX = new List<Class>();
-            //deletedXXX.ForEach(o =>
-            //{
-            //    o.School.Classes.Remove(o);
-            //});
-
             var serialized = serializedRepository.Get(ids);
             var deleted = ids.Except(serialized.Select(o => o.Id)).ToList();
-            deleted.ForEach(o => values.Remove(o));
+            deleted.ForEach(o => cache.TryRemove(o, out _));
+
+            // TODO: we must check the deleted entries - e.g. if a Class was removed, we must remove ClassTeacher, reference in School, Students etc...
+            // Express these relationships in a clearer way so they can be handled centrally?
+            //deleted.ForEach(o => o.School.Classes.Remove(o));
 
             foreach (var item in serialized)
             {
                 var bo = item.ToBusinessObject(repos);
-                values.Add(bo.Id, bo);
+                cache.AddOrUpdate(bo.Id, bo, (k, old) => bo);
             }
 
 
@@ -53,10 +52,10 @@
 
         public void Remove(TBusinessClass item)
         {
-            values.Remove(item.Id);
+            cache.TryRemove(item.Id, out _);
             serializedRepository.Remove(item.Id);
         }
 
-        public IEnumerable<TBusinessClass> Query() => values.Values;
+        public IEnumerable<TBusinessClass> Query() => cache.Values;
     }
 }

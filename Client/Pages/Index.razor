@@ -1,0 +1,163 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
+
+<PageTitle>Index</PageTitle>
+
+<div class="form-group">
+    <label>
+        User:
+        <input @bind="userInput" />
+    </label>
+</div>
+<div class="form-group">
+    <label>
+        Message:
+        <input @bind="messageInput" size="50" />
+    </label>
+</div>
+<button @onclick="Send" disabled="@(!IsConnected)">Send</button>
+
+<hr>,
+
+@foreach (var session in trainingSessions)
+{
+    <div>
+        @session.Username @*@GetTimeline(session)*@
+        @foreach (var evt in GetEvents(session))
+        {
+            <span style="position: relative; left: @(evt.Position*10)px">@evt.Value</span>
+        }
+    </div>
+}
+
+@code {
+    private HubConnection? hubConnection;
+    private string? userInput;
+    private string? messageInput;
+    //private string history = "";
+    private TrainingSessions trainingSessions = new();
+    private TimeSpan timePerUpdate = TimeSpan.FromSeconds(1);
+    private int width = 50;
+    private DateTime timelineStart = DateTime.Now;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/chathub"))
+            .Build();
+
+        hubConnection.On<string, string>("ReceiveMessage", (user, message) =>
+        {
+            var session = trainingSessions.GetOrCreate(user);
+            session.Add(message);
+
+            //var encodedMsg = $"{user}: {message}";
+            StateHasChanged();
+        });
+
+        await hubConnection.StartAsync();
+
+        var timer = new Timer(new TimerCallback(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                timelineStart = DateTime.Now - timePerUpdate * width;
+
+                //var rows = trainingSessions.Select(session =>
+                //        $"{session.Username.PadRight(10, ' ').Remove(10)} {GetTimeline(session, timelineStart)}");
+                //history = string.Join("\n", rows);
+
+                StateHasChanged();
+            });
+        }), null, 0, 50);
+    }
+
+    private IEnumerable<XX> GetEvents(TrainingSession session, DateTime? startTime = null)
+    {
+        startTime ??= timelineStart;
+        return session.History.GetBetween(startTime).Select(o => new XX { Position = (o.Item1 - startTime.Value) / timePerUpdate, Value = o.Item2 });
+    }
+
+    class XX
+    {
+        public double Position { get; set; }
+        public string Value { get; set; } = "";
+    }
+
+    private string GetTimeline(TrainingSession session, DateTime? startTime = null)
+    {
+        startTime ??= timelineStart;
+        var x = session.History.GetBetween(startTime)
+            .GroupBy(o => (int)Math.Floor((o.Item1 - startTime.Value) / timePerUpdate))
+            .ToDictionary(o => o.Key, o => o.ToList());
+        var timeline = string.Join("", Enumerable.Range(0, width).Select((o, i) =>
+        {
+            if (x.TryGetValue(i, out var found))
+            {
+                return "X";
+            }
+            return ".";
+        }));
+        return timeline;
+    }
+
+    private async Task Send()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("SendMessage", userInput, messageInput);
+        }
+    }
+
+    public bool IsConnected =>
+        hubConnection?.State == HubConnectionState.Connected;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
+    }
+
+    class TrainingSessions : List<TrainingSession>
+    {
+        public TrainingSession GetOrCreate(string username)
+        {
+            var session = this.SingleOrDefault(o => o.Username == username);
+            if (session == null)
+            {
+                session = new TrainingSession { Username = username };
+                Add(session);
+            }
+            return session;
+        }
+    }
+    class EventHistory
+    {
+        List<(DateTime, string)> history = new();
+        public void Add(string message)
+        {
+            history.Add((DateTime.Now, message));
+        }
+        public List<(DateTime, string)> GetBetween(DateTime? start = null, DateTime? end = null)
+        {
+            start ??= DateTime.MinValue;
+            end ??= DateTime.MaxValue;
+            return history.Where(o => o.Item1 >= start && o.Item1 <= end).ToList();
+        }
+    }
+
+    class TrainingSession
+    {
+        public string Username { get; set; } = "";
+        public EventHistory History { get; } = new();
+        public void Add(string message)
+        {
+            History.Add(message);
+        }
+    }
+
+}
